@@ -127,7 +127,7 @@
       recurse: yes
       owner: nginx
       group: nginx
-      mode: 755
+      mode: '755'
 
   - name: downloading magento
     get_url:
@@ -169,16 +169,6 @@
     tags:
       - magento
 
-  - name: copying files for php-fpm systemd
-    copy:
-      src: ./php-fpm.service
-      dest: /etc/systemd/system/php-fpm.service.d/php-fpm.service
-      owner: root
-      group: root
-      mode: '755'
-    tags:
-      - copy
-
   - name: copying files for php-fpm
     copy:
       src: ./www.conf
@@ -186,9 +176,19 @@
       owner: root
       group: root
       mode: '755'
-    notify: starting_phpfpm
     tags:
       - copy
+
+  - name: copying files for php-fpm systemd
+    copy:
+      src: ./php-fpm.service
+      dest: /etc/systemd/system/php-fpm.service.d/php-fpm.service
+      owner: root
+      group: root
+      mode: '755'
+    notify: starting_phpfpm
+    tags:
+      - fpm
 
   - name: copying files for wp
     copy:
@@ -197,7 +197,7 @@
       owner: nginx
       group: nginx
       mode: '774'
-    notify: checking_syntax
+    notify: starting_nginx
     tags:
       - copy
 
@@ -208,6 +208,7 @@
       owner: nginx
       group: nginx
       mode: '774'
+    notify: starting_nginx
     tags:
       - copy
 
@@ -217,17 +218,16 @@
     service:
       name: nginx
       enabled: yes
-      state: started
+      state: restarted
     tags:
       - systemctl
 
   - name: reloading_phpfpm
-    service:
-      name: systemctl
-      state: reload
-    tags:
-      - systemctl
-  
+    systemd:
+      state: restarted
+      daemon_reload: yes
+      name: php-fpm
+
   - name: starting_phpfpm
     service:
       name: php-fpm
