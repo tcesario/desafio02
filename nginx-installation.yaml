@@ -1,0 +1,244 @@
+---
+- hosts: web
+  remote_user: centos
+  become: true
+  vars:
+    username: c9127b3b63863dde5061c32c00527ffd
+    password: a36fdfea4ea30aae51851e67bdd47346
+  tasks:
+  - name: Disable SELinux
+    selinux:
+      state: disabled
+
+  - name: installing epel repository
+    yum:
+      name: epel-release
+      state: present
+
+  - name: update cache
+    yum:
+      update_cache: yes    
+
+  - name: adding nginx repository
+    yum_repository:
+      name: nginx
+      description: nginx repository
+      baseurl: http://nginx.org/packages/mainline/centos/7/$basearch/
+      gpgcheck: no
+      enabled: yes
+
+  - name: installing nginx
+    yum:
+      name: nginx
+      state: present
+
+  - name: python mysql
+    package:
+      name: MySQL-python
+      state: present
+
+  - name: Creating directories
+    file:
+      path: "{{ item }}"
+      state: directory
+    with_items:
+      - /var/www/html/
+      - /var/www/html/loja
+
+  - name: installing php repository
+    yum:
+      name: http://rpms.remirepo.net/enterprise/remi-release-7.rpm
+      state: present
+  
+  - name: enable php73
+    shell: yum-config-manager --enable remi-php73
+
+  - name: installing packages
+    yum:
+      name: ['php', 'php-mysqlnd', 'php-bcmath', 'php-ctype', 'php-curl', 'php-dom', 'php-gd', 'php-hash', 'php-iconv', 'php-intl', 'php-mbstring', 'php-openssl', 'php-pdo_mysql', 'php-simplexml', 'php-soap', 'php-xsl', 'php-zip', 'php-fpm', 'php-pecl-zip', 'unzip']
+      state: present
+    tags:
+        - php
+  
+  - name: adding MariaDB repository
+    yum_repository:
+      name: mariadb
+      description: 'mariadb repository'
+      baseurl: http://yum.mariadb.org/10.4/centos7-amd64
+      gpgkey: https://yum.mariadb.org/RPM-GPG-KEY-MariaDB
+      gpgcheck: yes
+      enabled: yes
+
+  - name: installing MariaDB
+    yum:
+      name: ['MariaDB-server', 'MariaDB-client']
+      state: present
+    
+  - name: starting mariadb  
+    systemd:
+      name: mariadb
+      state: started
+      enabled: yes
+
+  - name: creating database for wordpress
+    mysql_db:
+      name: wordpress
+      state: present
+
+  - name: creating database for magento
+    mysql_db:
+      name: magento
+      state: present  
+
+  - name: creating user for wordpress
+    mysql_user:
+      name: wp-admin
+      host: localhost
+      password: Mandic@2020
+      priv: 'wordpress.*:ALL'
+      state: present
+
+  - name: creating user for magento
+    mysql_user:
+      name: mg-admin
+      host: localhost
+      password: Mandic@2020
+      priv: 'magento.*:ALL'
+      state: present
+
+  - name: downloading wordpress
+    get_url:
+      url: https://wordpress.org/wordpress-5.4.tar.gz
+      dest: /var/www/html/
+
+  - name: extracting wordpress
+    unarchive:
+      src: /var/www/html/wordpress-5.4.tar.gz
+      dest: /var/www/html/
+      remote_src: yes
+
+  - name: renaming wordpress directory
+    command: mv /var/www/html/wordpress /var/www/html/blog
+
+  - name: changing ownership
+    file:
+      path: /var/www/html/blog
+      state: directory
+      recurse: yes
+      owner: nginx
+      group: nginx
+      mode: 755
+
+  - name: downloading magento
+    get_url:
+      url: https://getcomposer.org/installer
+      dest: /tmp
+    tags:
+      - magento
+
+  - name: installing magento
+    command: php /tmp/installer
+    args:
+      chdir: /tmp/
+    tags:
+      - magento
+
+  - name: moving composer
+    command: mv /tmp/composer.phar /usr/local/bin/composer
+    tags:
+      - magento
+
+  - name: login on magento repo
+    command: /usr/local/bin/composer global config http-basic.repo.magento.com "{{ username }}" "{{ password }}"
+    tags:
+      - login
+
+  - name: install magento
+    composer:
+      command: create-project
+      arguments: --repository=https://repo.magento.com/ magento/project-community-edition magento
+      working_dir: /var/www/html/loja
+      prefer_dist: yes
+    tags:
+      - magento
+
+  - name: permissoes magento 
+    shell: chmod -R 0777 var/ pub/ generated/
+    args:
+      chdir: /var/www/html/loja/magento
+    tags:
+      - magento
+
+  - name: copying files for php-fpm systemd
+    copy:
+      src: ./php-fpm.service
+      dest: /etc/systemd/system/php-fpm.service.d/php-fpm.service
+      owner: root
+      group: root
+      mode: '755'
+    tags:
+      - copy
+
+  - name: copying files for php-fpm
+    copy:
+      src: ./www.conf
+      dest: /etc/php-fpm.d/www.conf
+      owner: root
+      group: root
+      mode: '755'
+    notify: starting_phpfpm
+    tags:
+      - copy
+
+  - name: copying files for wp
+    copy:
+      src: ./blog.conf
+      dest: /etc/nginx/conf.d/blog.conf
+      owner: nginx
+      group: nginx
+      mode: '774'
+    notify: checking_syntax
+    tags:
+      - copy
+
+  - name: copying files for magento
+    copy:
+      src: ./loja-blog.conf
+      dest: /etc/nginx/conf.d/loja-blog.conf
+      owner: nginx
+      group: nginx
+      mode: '774'
+    tags:
+      - copy
+
+  handlers:
+
+  - name: starting_nginx
+    service:
+      name: nginx
+      enabled: yes
+      state: started
+    tags:
+      - systemctl
+
+  - name: reloading_phpfpm
+    service:
+      name: systemctl
+      state: reload
+    tags:
+      - systemctl
+  
+  - name: starting_phpfpm
+    service:
+      name: php-fpm
+      state: started
+    tags:
+      - systemctl
+
+  - name: starting_mysql
+    service:
+      name: mariadb
+      enabled: yes
+      state: started
+    tags:
+      - systemctl
